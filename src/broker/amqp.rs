@@ -59,10 +59,7 @@ impl BrokerBuilder for AMQPBrokerBuilder {
     /// Declare a queue.
     fn declare_queue(mut self, name: &str) -> Self {
         let mut fields = FieldTable::default();
-
-        if name == "celery" {
-            fields.insert(ShortString::from("x-max-priority"), AMQPValue::LongUInt(10));
-        }
+        fields.insert(ShortString::from("x-max-priority"), AMQPValue::LongUInt(10));
 
         self.config.queues.insert(
             name.into(),
