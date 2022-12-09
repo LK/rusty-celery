@@ -7,7 +7,7 @@ use lapin::options::{
     BasicAckOptions, BasicCancelOptions, BasicConsumeOptions, BasicPublishOptions, BasicQosOptions,
     QueueDeclareOptions,
 };
-use lapin::types::{AMQPValue, FieldArray, FieldTable};
+use lapin::types::{AMQPValue, FieldArray, FieldTable, ShortString};
 use lapin::uri::{self, AMQPUri};
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Queue};
 use log::debug;
@@ -24,7 +24,7 @@ use tokio_reactor_trait::Tokio as TokioReactor;
 struct Config {
     broker_url: String,
     prefetch_count: u16,
-    queues: HashMap<String, QueueDeclareOptions>,
+    queues: HashMap<String, (QueueDeclareOptions, FieldTable)>,
     heartbeat: Option<u16>,
 }
 
@@ -58,15 +58,21 @@ impl BrokerBuilder for AMQPBrokerBuilder {
 
     /// Declare a queue.
     fn declare_queue(mut self, name: &str) -> Self {
+        let mut fields = FieldTable::default();
+        fields.insert(ShortString::from("x-max-priority"), AMQPValue::LongUInt(10));
+
         self.config.queues.insert(
             name.into(),
-            QueueDeclareOptions {
-                passive: false,
-                durable: true,
-                exclusive: false,
-                auto_delete: false,
-                nowait: false,
-            },
+            (
+                QueueDeclareOptions {
+                    passive: false,
+                    durable: true,
+                    exclusive: false,
+                    auto_delete: false,
+                    nowait: false,
+                },
+                fields,
+            ),
         );
         self
     }
@@ -96,9 +102,9 @@ impl BrokerBuilder for AMQPBrokerBuilder {
         let produce_channel = conn.create_channel().await?;
 
         let mut queues: HashMap<String, Queue> = HashMap::new();
-        for (queue_name, queue_options) in &self.config.queues {
+        for (queue_name, (queue_options, queue_field_table)) in &self.config.queues {
             let queue = consume_channel
-                .queue_declare(queue_name, *queue_options, FieldTable::default())
+                .queue_declare(queue_name, *queue_options, queue_field_table.clone())
                 .await?;
             queues.insert(queue_name.into(), queue);
         }
@@ -141,7 +147,7 @@ pub struct AMQPBroker {
     /// This is only wrapped in RwLock for interior mutability.
     queues: RwLock<HashMap<String, Queue>>,
 
-    queue_declare_options: HashMap<String, QueueDeclareOptions>,
+    queue_declare_options: HashMap<String, (QueueDeclareOptions, FieldTable)>,
 
     /// Need to keep track of prefetch count. We put this behind a mutex to get interior
     /// mutability.
@@ -356,9 +362,9 @@ impl Broker for AMQPBroker {
             *produce_channel = conn.create_channel().await?;
 
             queues.clear();
-            for (queue_name, queue_options) in &self.queue_declare_options {
+            for (queue_name, (queue_options, queue_field_table)) in &self.queue_declare_options {
                 let queue = consume_channel
-                    .queue_declare(queue_name, *queue_options, FieldTable::default())
+                    .queue_declare(queue_name, *queue_options, queue_field_table.clone())
                     .await?;
                 queues.insert(queue_name.into(), queue);
             }
